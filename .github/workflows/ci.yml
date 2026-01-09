@@ -44,27 +44,54 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
+      # ---------- BUILD ----------
       - name: Build Debug APK
         if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both' }}
         run: ./gradlew assembleDebug
 
-      - name: Build Release APK (unsigned)
+      - name: Build Release APK
         if: ${{ github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both' }}
         run: ./gradlew assembleRelease
 
-      # ---- RELEASE SIGNING (STABLE METHOD) ----
+      # ---------- RELEASE SIGN (NO PC REQUIRED) ----------
+      - name: Generate Keystore
+        if: ${{ github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both' }}
+        run: |
+          keytool -genkeypair \
+            -alias ${{ secrets.KEY_ALIAS }} \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -keystore release.keystore \
+            -storepass ${{ secrets.KS_PASSWORD }} \
+            -keypass ${{ secrets.KEY_PASSWORD }} \
+            -dname "CN=CI, OU=Android, O=LibreTube, L=Internet, S=World, C=IN"
+
       - name: Sign Release APK
         if: ${{ github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both' }}
-        uses: ilharp/sign-android-release@v2
-        with:
-          releaseDir: app/build/outputs/apk/release
-          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
-          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          APK=$(find app/build/outputs -name "*release*.apk" | head -n 1)
 
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks release.keystore \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --ks-pass pass:${{ secrets.KS_PASSWORD }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --out signed-release.apk \
+            $APK
+
+      # ---------- UPLOAD ----------
       - name: Upload Debug APK
         if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both' }}
         uses: actions/upload-artifact@v6
         with:
           name: debug-apk
+          path: app/build/outputs/**/debug/*.apk
+          if-no-files-found: warn
+
+      - name: Upload Release APK
+        if: ${{ github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-apk
+          path: signed-release.apk
